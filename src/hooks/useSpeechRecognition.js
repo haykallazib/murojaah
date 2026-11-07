@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useMurojaahStore } from '../store/useMurojaahStore.js'
-import { getPendingFinalResults, getPendingTranscript } from '../utils/speechRecognition.js'
+import {
+  getPendingFinalResults,
+  getPendingTranscript,
+  mergeSpeechTranscript,
+} from '../utils/speechRecognition.js'
 
 const SpeechRecognition = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null
 const SUPPORTED_LANGUAGES = ['ar-SA', 'ar-EG', 'ar-AE']
@@ -67,6 +71,10 @@ export function useSpeechRecognition() {
     if (requestId !== requestIdRef.current || store.getState().state !== 'REQUEST_MIC') return
     store.getState().setTranscript('')
 
+    let lastEvaluatedSpeech = ''
+    let lastEvaluationAt = 0
+    let activeVerseIndex = store.getState().currentIndex
+
     const startRecognition = (languageIndex = 0) => {
       if (requestId !== requestIdRef.current) return
       const state = store.getState().state
@@ -82,7 +90,16 @@ export function useSpeechRecognition() {
       const handledResultIndexes = new Set()
       let nextLanguageIndex = languageIndex
 
+      const resetForNextVerse = () => {
+        const currentIndex = store.getState().currentIndex
+        if (currentIndex === activeVerseIndex) return
+        activeVerseIndex = currentIndex
+        lastEvaluatedSpeech = ''
+        lastEvaluationAt = 0
+      }
+
       const evaluatePendingResults = () => {
+        resetForNextVerse()
         const state = store.getState().state
         const pending = getPendingFinalResults(latestResults, handledResultIndexes)
         if (state !== 'LISTENING') {
@@ -92,7 +109,17 @@ export function useSpeechRecognition() {
         if (!pending.length) return
 
         pending.forEach(({ index }) => handledResultIndexes.add(index))
-        const spoken = pending.map(({ transcript }) => transcript).join(' ')
+        const spoken = pending.reduce(
+          (merged, { transcript }) => mergeSpeechTranscript(merged, transcript),
+          ''
+        )
+
+        const normalizedSpeech = spoken.split(/\s+/u).map((word) => word.normalize('NFC')).join(' ')
+        const normalizedPrevious = lastEvaluatedSpeech.split(/\s+/u).map((word) => word.normalize('NFC')).join(' ')
+        if (normalizedSpeech === normalizedPrevious && Date.now() - lastEvaluationAt < 3000) return
+
+        lastEvaluatedSpeech = normalizedSpeech
+        lastEvaluationAt = Date.now()
         store.getState().setTranscript(spoken)
         store.getState().evaluateTranscript(spoken)
 
@@ -105,6 +132,7 @@ export function useSpeechRecognition() {
 
       recognition.onresult = (event) => {
         if (recognitionRef.current !== recognition) return
+        resetForNextVerse()
         latestResults = Array.from(event.results)
         if (store.getState().state !== 'LISTENING') {
           getPendingFinalResults(latestResults, handledResultIndexes)
