@@ -62,6 +62,7 @@ export function LoginView({ sessionError = '', passwordRecovery = false }) {
     try {
       if (passwordRecovery) {
         await updatePassword({ password })
+        window.history.replaceState(null, '', window.location.pathname)
         setPassword('')
         setConfirmPassword('')
         setRecoveryComplete(true)

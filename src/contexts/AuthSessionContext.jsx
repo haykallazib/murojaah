@@ -6,7 +6,11 @@ export function AuthSessionProvider({ children }) {
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
   const [authError, setAuthError] = useState(supabaseConfigurationError)
-  const [passwordRecovery, setPasswordRecovery] = useState(false)
+  const [passwordRecovery, setPasswordRecovery] = useState(() => {
+    const query = new URLSearchParams(window.location.search)
+    const hash = new URLSearchParams(window.location.hash.slice(1))
+    return query.get('flow') === 'recovery' || hash.get('type') === 'recovery'
+  })
   const suppressSignupSession = useRef(false)
   useEffect(() => {
     if (!supabase) {
@@ -82,7 +86,7 @@ export function AuthSessionProvider({ children }) {
     requestPasswordReset: async ({ email }) => {
       if (!supabase) throw new Error(supabaseConfigurationError)
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin,
+        redirectTo: `${window.location.origin}/?flow=recovery`,
       })
       if (error) throw error
     },
