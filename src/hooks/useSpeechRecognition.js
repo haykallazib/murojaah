@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useMurojaahStore } from '../store/useMurojaahStore.js'
+import { getPendingFinalResults, getPendingTranscript } from '../utils/speechRecognition.js'
 
 const SpeechRecognition = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null
 const SUPPORTED_LANGUAGES = ['ar-SA', 'ar-EG', 'ar-AE']
@@ -77,35 +78,48 @@ export function useSpeechRecognition() {
       recognition.interimResults = true
       recognition.maxAlternatives = 1
       recognitionRef.current = recognition
-      let finalTranscript = ''
-      let interimTranscript = ''
+      let latestResults = []
+      const handledResultIndexes = new Set()
       let nextLanguageIndex = languageIndex
 
+      const evaluatePendingResults = () => {
+        const state = store.getState().state
+        const pending = getPendingFinalResults(latestResults, handledResultIndexes)
+        if (state !== 'LISTENING') {
+          pending.forEach(({ index }) => handledResultIndexes.add(index))
+          return
+        }
+        if (!pending.length) return
+
+        pending.forEach(({ index }) => handledResultIndexes.add(index))
+        const spoken = pending.map(({ transcript }) => transcript).join(' ')
+        store.getState().setTranscript(spoken)
+        store.getState().evaluateTranscript(spoken)
+
+        const nextState = store.getState().state
+        if (nextState === 'WRONG' || nextState === 'FINISHED') {
+          recognitionRef.current = null
+          stopRecognition(recognition)
+        }
+      }
+
       recognition.onresult = (event) => {
-        if (recognitionRef.current !== recognition || store.getState().state !== 'LISTENING') return
-        interimTranscript = ''
-        for (let index = event.resultIndex; index < event.results.length; index += 1) {
-          const result = event.results[index]
-          if (result.isFinal) finalTranscript += `${result[0].transcript} `
-          else interimTranscript += result[0].transcript
+        if (recognitionRef.current !== recognition) return
+        latestResults = Array.from(event.results)
+        if (store.getState().state !== 'LISTENING') {
+          getPendingFinalResults(latestResults, handledResultIndexes)
+            .forEach(({ index }) => handledResultIndexes.add(index))
+          return
         }
 
-        const transcript = `${finalTranscript}${interimTranscript}`.trim()
+        const transcript = getPendingTranscript(latestResults, handledResultIndexes)
         store.getState().setTranscript(transcript)
 
-        if (finalTranscript.trim()) {
+        if (getPendingFinalResults(latestResults, handledResultIndexes).length) {
           clearTimeout(finalizeTimerRef.current)
           finalizeTimerRef.current = setTimeout(() => {
             if (recognitionRef.current !== recognition || store.getState().state !== 'LISTENING') return
-            const spoken = finalTranscript.trim()
-            finalTranscript = ''
-            interimTranscript = ''
-            store.getState().evaluateTranscript(spoken)
-            const nextState = store.getState().state
-            if (nextState === 'WRONG' || nextState === 'FINISHED') {
-              recognitionRef.current = null
-              stopRecognition(recognition)
-            }
+            evaluatePendingResults()
           }, 1100)
         }
       }
@@ -139,10 +153,7 @@ export function useSpeechRecognition() {
         if (recognitionRef.current !== recognition || requestId !== requestIdRef.current) return
         recognitionRef.current = null
         clearTimeout(finalizeTimerRef.current)
-
-        if (finalTranscript.trim() && store.getState().state === 'LISTENING') {
-          store.getState().evaluateTranscript(finalTranscript.trim())
-        }
+        evaluatePendingResults()
 
         const stateAfterEnd = store.getState().state
         if (stateAfterEnd === 'WRONG' || stateAfterEnd === 'FINISHED' || stateAfterEnd === 'REQUEST_MIC') return
