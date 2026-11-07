@@ -7,7 +7,7 @@ export function AuthSessionProvider({ children }) {
   const [authReady, setAuthReady] = useState(false)
   const [authError, setAuthError] = useState(supabaseConfigurationError)
   const [passwordRecovery, setPasswordRecovery] = useState(false)
-  const signupInProgress = useRef(false)
+  const suppressSignupSession = useRef(false)
   useEffect(() => {
     if (!supabase) {
       setAuthReady(true)
@@ -17,7 +17,7 @@ export function AuthSessionProvider({ children }) {
     let active = true
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (active) {
-        if (!(signupInProgress.current && event === 'SIGNED_IN')) {
+        if (!(suppressSignupSession.current && event === 'SIGNED_IN')) {
           setUser(session?.user ?? null)
         }
         if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
@@ -31,7 +31,9 @@ export function AuthSessionProvider({ children }) {
       .then(({ data, error }) => {
         if (!active) return
         if (error) throw error
-        setUser(data.session?.user ?? null)
+        if (!suppressSignupSession.current) {
+          setUser(data.session?.user ?? null)
+        }
         setAuthReady(true)
       })
       .catch((error) => {
@@ -53,27 +55,24 @@ export function AuthSessionProvider({ children }) {
     passwordRecovery,
     signInWithPassword: async ({ email, password }) => {
       if (!supabase) throw new Error(supabaseConfigurationError)
+      suppressSignupSession.current = false
       const { error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) throw error
     },
     signUpWithPassword: async ({ name, email, password }) => {
       if (!supabase) throw new Error(supabaseConfigurationError)
-      signupInProgress.current = true
-      try {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { data: { full_name: name } },
-        })
-        if (error) throw error
-        if (data.session) {
-          const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' })
-          if (signOutError) throw signOutError
-        }
-        return { needsEmailConfirmation: !data.session }
-      } finally {
-        signupInProgress.current = false
+      suppressSignupSession.current = true
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { full_name: name } },
+      })
+      if (error) throw error
+      if (data.session) {
+        const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' })
+        if (signOutError) throw signOutError
       }
+      return { needsEmailConfirmation: !data.session }
     },
     resendSignupConfirmation: async ({ email }) => {
       if (!supabase) throw new Error(supabaseConfigurationError)
@@ -94,6 +93,7 @@ export function AuthSessionProvider({ children }) {
     },
     signInWithGoogle: async () => {
       if (!supabase) throw new Error(supabaseConfigurationError)
+      suppressSignupSession.current = false
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo: window.location.origin },
