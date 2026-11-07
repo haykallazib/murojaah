@@ -75,18 +75,15 @@ export function LoginView({ sessionError = '', passwordRecovery = false }) {
           email: normalizedEmail,
           password,
         })
+        setIsSignUp(false)
+        setPassword('')
+        setConfirmPassword('')
         if (needsEmailConfirmation) {
-          setIsSignUp(false)
           setCanResendConfirmation(true)
-          setPassword('')
-          setConfirmPassword('')
           setNotice('Pendaftaran berhasil. Periksa email Anda untuk mengonfirmasi akun, lalu masuk.')
         } else {
-          setIsSignUp(false)
           setCanResendConfirmation(false)
-          setPassword('')
-          setConfirmPassword('')
-          setNotice('Akun berhasil dibuat dan Anda sudah masuk.')
+          setNotice('Akun berhasil dibuat. Silakan masuk dengan email dan sandi yang baru dibuat.')
         }
       } else {
         await signInWithPassword({ email: normalizedEmail, password })

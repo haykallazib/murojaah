@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AuthSessionContext } from './authSessionContext.js'
 import { supabase, supabaseConfigurationError } from '../utils/supabase.js'
 
@@ -7,6 +7,7 @@ export function AuthSessionProvider({ children }) {
   const [authReady, setAuthReady] = useState(false)
   const [authError, setAuthError] = useState(supabaseConfigurationError)
   const [passwordRecovery, setPasswordRecovery] = useState(false)
+  const signupInProgress = useRef(false)
   useEffect(() => {
     if (!supabase) {
       setAuthReady(true)
@@ -16,7 +17,9 @@ export function AuthSessionProvider({ children }) {
     let active = true
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (active) {
-        setUser(session?.user ?? null)
+        if (!(signupInProgress.current && event === 'SIGNED_IN')) {
+          setUser(session?.user ?? null)
+        }
         if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
         if (event === 'SIGNED_OUT') setPasswordRecovery(false)
         setAuthError('')
@@ -55,13 +58,22 @@ export function AuthSessionProvider({ children }) {
     },
     signUpWithPassword: async ({ name, email, password }) => {
       if (!supabase) throw new Error(supabaseConfigurationError)
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { full_name: name } },
-      })
-      if (error) throw error
-      return { needsEmailConfirmation: !data.session }
+      signupInProgress.current = true
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { full_name: name } },
+        })
+        if (error) throw error
+        if (data.session) {
+          const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' })
+          if (signOutError) throw signOutError
+        }
+        return { needsEmailConfirmation: !data.session }
+      } finally {
+        signupInProgress.current = false
+      }
     },
     resendSignupConfirmation: async ({ email }) => {
       if (!supabase) throw new Error(supabaseConfigurationError)
